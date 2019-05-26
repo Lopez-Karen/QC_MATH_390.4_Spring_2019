@@ -1,0 +1,320 @@
+---
+title: "QC_Math_390.4_Spring_2019_Final_Project"
+author: "Karen"
+date: "5/22/2019"
+output: html_document
+---
+
+```{r}
+pacman::p_load(dplyr, stargazer,Hmisc, ggmap, tidyr, magrittr)
+
+housing_data_2016_2017 <- read.csv("~/QC_Math_390.4_Spring_2019/writing_assignments/housing_data_2016_2017.csv")
+
+#keeping useful features
+queens_housing_data_2016_2017 <- 
+  housing_data_2016_2017 %>% 
+  select(sale_price,
+         coop_condo,
+         community_district_num, 
+         full_address_or_zip_code,
+         listing_price_to_nearest_1000,
+         pct_tax_deductibl,
+         maintenance_cost, 
+         approx_year_built,
+         sq_footage,
+         num_floors_in_building,
+         num_total_rooms,
+         num_bedrooms,
+         num_full_bathrooms,
+         dining_room_type,
+         kitchen_type,
+         garage_exists,
+         parking_charges,
+         walk_score,
+         dogs_allowed,
+         cats_allowed)
+
+#correcting typos 
+queens_housing_data_2016_2017$kitchen_type[queens_housing_data_2016_2017$kitchen_type == "eatin" ] <- "eat in"   
+queens_housing_data_2016_2017$kitchen_type[queens_housing_data_2016_2017$kitchen_type ==  "efficiemcy" ] <-  "efficiency"
+queens_housing_data_2016_2017$kitchen_type[queens_housing_data_2016_2017$kitchen_type == "efficiency kitchen" ] <- "efficiency" 
+queens_housing_data_2016_2017$kitchen_type[queens_housing_data_2016_2017$kitchen_type == "efficiency kitchene" ] <- "efficiency" 
+queens_housing_data_2016_2017$kitchen_type[queens_housing_data_2016_2017$kitchen_type == "efficiency ktchen" ] <- "efficiency" 
+queens_housing_data_2016_2017$garage_exists[queens_housing_data_2016_2017$garage_exists == "1" ] <-  "yes"
+queens_housing_data_2016_2017$garage_exists[queens_housing_data_2016_2017$garage_exists == "eys" ] <-  "yes"
+queens_housing_data_2016_2017$garage_exists[queens_housing_data_2016_2017$garage_exists == "UG" ] <-  "yes" 
+queens_housing_data_2016_2017$garage_exists[queens_housing_data_2016_2017$garage_exists == "Underground"] <-  "yes"
+queens_housing_data_2016_2017$garage_exists[queens_housing_data_2016_2017$garage_exists == "Yes"] <-  "yes"
+queens_housing_data_2016_2017$garage_exists <- as.character(queens_housing_data_2016_2017$garage_exists)
+queens_housing_data_2016_2017$garage_exists[is.na(queens_housing_data_2016_2017$garage_exists)] <- 0 
+queens_housing_data_2016_2017$garage_exists <- factor(queens_housing_data_2016_2017$garage_exists)
+
+#further cleaing data
+tmp1 <- queens_housing_data_2016_2017 %>% 
+  mutate(sale_price = as.numeric(gsub("[$,]", "", queens_housing_data_2016_2017$sale_price))) %>% #removing dollar sign and making a number
+  mutate(listing_price_to_nearest_1000 = as.numeric(gsub("[$,]", "", queens_housing_data_2016_2017$listing_price_to_nearest_1000 ))) %>%
+  mutate(maintenance_cost = as.numeric(gsub("[$,]", "", queens_housing_data_2016_2017$maintenance_cost))) %>%
+  mutate(kitchen_type = tolower(kitchen_type)) %>% #changing levels to lowercase for uniformity 
+  mutate(garage_exists = as.numeric(garage_exists)) %>% #coercing factor into 0 or 1
+  mutate(parking_charges = as.numeric(gsub("[$,]", "", queens_housing_data_2016_2017$parking_charges))) %>% #removing dollar sign and making a number
+  mutate(dogs_allowed = ifelse(dogs_allowed == "no", 0, 1)) %>%   #coercing factor into a 0 or 1
+  mutate(cats_allowed = ifelse(cats_allowed == "no", 0, 1)) %>%
+  mutate(animals_allowed = ifelse(cats_allowed + dogs_allowed > 0, 1, 0)) #do to high correlation between the two variables we join them
+
+tmp1 %<>%
+  select(-c(cats_allowed, dogs_allowed)) #drop unneccesary features
+
+#Not run : register_google(key = **insert API Key**)
+#create Lattitude and longitude features
+for (i in 1:nrow(tmp1)) {
+  latlon = geocode(tmp1$full_address_or_zip_code[i], output = "latlon")
+  tmp1$lon[i] = as.numeric(latlon[1])
+  tmp1$lat[i] = as.numeric(latlon[2])
+}
+
+#create commuting time to midtown feature (very long and tedious), drop observation 677 because not a address and function will not run
+address <- as.data.frame(tmp1$full_address_or_zip_code)
+address <- unique(address)
+address1 <- address[1:1177, ]
+address1 <- address1[-677]
+
+
+
+commuting_distance <- mapdist(from = as.character(address1), to = "42 St-Bryant Park Subway Station, New York, NY 10018, USA", mode = c("transit"), output = c("simple"))
+
+commute_to_midtown <- commuting_distance %>% select(from, miles, minutes)
+names(commute_to_midtown)[1] <- "full_address_or_zip_code"
+names(commute_to_midtown)[2] <- "miles_to_midtown"
+names(commute_to_midtown)[3] <- "minutes_to_midtown"
+names(address)[1] <- "full_address_or_zip_code"
+tmp <- merge(address, commute_to_midtown, by = "full_address_or_zip_code", all.x = TRUE)
+queens_housing_data_2016_2017 <- merge(tmp1, tmp, by = "full_address_or_zip_code", all.x = TRUE)
+#now you can drop full address since we have lattiude and longitude
+queens_housing_data_2016_2017 %<>% select(-full_address_or_zip_code)
+
+
+stargazer(queens_housing_data_2016_2017 , title = "Descriptive Statistics",median = TRUE,  type= "html", out = 'DescriptiveStatisticsMath390.doc')
+```
+
+```{r}
+#table of missingness
+M = tbl_df(apply(is.na(queens_housing_data_2016_2017), 2, as.numeric))
+colnames(M) = paste("is_missing_", colnames(queens_housing_data_2016_2017), sep = "")
+head(M)
+summary(M)
+M = tbl_df(t(unique(t(M))))
+```
+
+Remove feature with no missingness
+```{r}
+M %<>% select_if(function(x){sum(x) > 0})
+head(M)
+dim(M)
+colSums(M)
+```
+
+```{r}
+#cannto have character variables
+queens_housing_data_2016_2017 %<>% mutate(kitchen_type = as.factor(kitchen_type))
+```
+
+
+```{r}
+pacman::p_load(missForest)
+#drop y nas
+y_queens_housing_data_2016_2017 <- queens_housing_data_2016_2017 %>% filter(!is.na(sale_price))
+
+y = queens_housing_data_2016_2017$sale_price
+X = queens_housing_data_2016_2017
+X$sales_price = NULL
+
+Ximp = missForest(X, sampsize = rep(200, ncol(X)))$ximp
+
+```
+
+Now we take our imputed dataset, combine it with our missingness indicators for a new design matrix.
+```{r}
+Xnew = data.frame(cbind(Ximp, M))
+```
+
+
+REGRESSION TREE MODELING
+```{r}
+pacman::p_install_gh("kapelner/YARF", subdir = "YARFJARs", ref = "dev")
+pacman::p_install_gh("kapelner/YARF", subdir = "YARF", ref = "dev")
+library(YARF)
+
+
+options(java.parameters = "-Xmx4000m")
+pacman::p_load(YARF)
+```
+
+Now we split the data:
+```{r}
+test_prop = 0.1
+train_indices = sample(1 : nrow(Ximp), round((1 - test_prop) * nrow(Ximp)))
+Ximp_train = Ximp[train_indices, ]
+y_train = Ximp_train$sale_price
+X_train = Ximp_train
+X_train$sale_price = NULL
+```
+
+And fit a tree model:
+```{r}
+tree_mod = YARFCART(X_train, y_train)
+
+```
+insample fit
+```{r}
+y_hat_train = predict(tree_mod, Ximp_train)
+e = y_train - y_hat_train
+sd(e)
+1 - sd(e) / sd(y_train)
+```
+
+Illustrate the tree
+```{r}
+illustrate_trees(tree_mod, max_depth = 3, open_file = TRUE)
+get_tree_num_nodes_leaves_max_depths(tree_mod)
+```
+
+test set
+```{r}
+test_indices = setdiff(1 : nrow(Ximp), train_indices)
+Ximp_test = Ximp[test_indices, ]
+y_test = Ximp_test$sale_price
+X_test = Ximp_test
+X_test$sale_price = NULL
+```
+
+oos
+```{r}
+y_hat_test_tree = predict(tree_mod, Ximp_test)
+e = y_test - y_hat_test_tree
+sd(e)
+1 - sd(e) / sd(y_test)
+```
+
+illustrate
+```{r}
+get_tree_num_nodes_leaves_max_depths(tree_mod)
+```
+
+
+LINEAR MODELING
+```{r}
+linear_mod = lm(sale_price ~ ., Ximp_train)
+summary(linear_mod)$sigma
+summary(linear_mod)$r.squared
+
+stargazer(linear_mod, title = "Estimation Results", type = "text")
+stargazer(linear_mod , title = "Estimation Results", type= "html", out = 'EstimationResults_Math390.doc')
+```
+
+```{r}
+y_hat_test_linear = predict(linear_mod, Ximp_test)
+e = y_test - y_hat_test_linear
+sd(e)
+1 - sd(e) / sd(y_test)
+```
+
+
+RANDOM FOREST MODELING
+```{r}
+y = Ximp$sale_price
+X = Ximp
+X$sale_price = NULL
+
+num_trees = 300
+n_train = 500
+
+training_indices = sample(1 : nrow(Ximp), n_train)
+Ximp_train = Ximp[training_indices, ]
+y_train = Ximp_train$sale_price
+X_train = Ximp_train
+X_train$income = NULL
+mod_bag = YARFBAG(X_train, y_train, num_trees = num_trees, calculate_oob_error = FALSE)
+mod_rf = YARF(X_train, y_train, num_trees = num_trees, calculate_oob_error = FALSE)
+```
+
+And test:
+
+```{r}
+test_indices = sample(setdiff(1 : nrow(adult), training_indices), 25000)
+adult_test = adult[test_indices, ]
+y_test = adult_test$income
+X_test = adult_test
+X_test$income = NULL
+y_hat_test_bag = predict(mod_bag, X_test)
+y_hat_test_rf = predict(mod_rf, X_test)
+oos_conf_table_bag = table(y_test, y_hat_test_bag)
+oos_conf_table_rf = table(y_test, y_hat_test_rf)
+oos_conf_table_bag
+oos_conf_table_rf
+miscl_err_bag = mean(y_test != y_hat_test_bag)
+miscl_err_rf = mean(y_test != y_hat_test_rf)
+miscl_err_bag
+miscl_err_rf
+cat("gain: ", (miscl_err_bag - miscl_err_rf) / miscl_err_bag * 100, "%\n")
+```
+
+MLR for best tuning parameters
+```{r}
+pacman::p_load(mlr)
+```
+
+```{r}
+getParamSet("regr.randomForest")
+algorithm <- makeLearner("regr.randomForest", predict.type = "response", par.vals = list(ntree = 200, mtry = 3))
+algorithm$par.vals <- list( importance = TRUE )
+
+rf_param <- makeParamSet(
+makeIntegerParam("ntree",lower = 50, upper = 500),
+makeIntegerParam("mtry", lower = 3, upper = 10),
+makeIntegerParam("nodesize", lower = 10, upper = 50)
+)
+
+#set optimization technique
+control <- makeTuneControlRandom(maxit = 50L)
+#set validation strategy
+rdesc <- makeResampleDesc("CV",iters = 3L)
+
+regr_task = makeRegrTask('train_set_new',train_set_new, 'sale_price')
+rf_tune <- tuneParams(learner = rf.lrn , task = traintask, resampling = rdesc, measures = list(acc), par.set = rf_param, control = control, show.info = T)
+#best parameters
+rf_tune$x
+```
+
+
+
+
+
+
+OOB Validation
+```{r}
+mod_bag = YARFBAG(X, y, num_trees = 500)
+mod_bag
+mod_rf = YARF(X, y, num_trees = 500)
+mod_rf
+```
+
+Gain in decorrelation?
+
+```{r}
+cat("gain: ", (mod_rf$pseudo_rsq_oob - mod_bag$pseudo_rsq_oob) / mod_bag$pseudo_rsq_oob * 100, "%\n")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
